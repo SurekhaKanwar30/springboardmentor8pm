@@ -2,74 +2,113 @@ import streamlit as st
 import pandas as pd
 import pickle
 
-# Declaring the teams
-
-teams = ['Sunrisers Hyderabad',
-         'Mumbai Indians',
-         'Royal Challengers Bangalore',
-         'Kolkata Knight Riders',
-         'Kings XI Punjab',
-         'Chennai Super Kings',
-         'Rajasthan Royals',
-         'Delhi Capitals']
-
-# declaring the venues
-
-cities = ['Hyderabad', 'Bangalore', 'Mumbai', 'Indore', 'Kolkata', 'Delhi',
-          'Chandigarh', 'Jaipur', 'Chennai', 'Cape Town', 'Port Elizabeth',
-          'Durban', 'Centurion', 'East London', 'Johannesburg', 'Kimberley',
-          'Bloemfontein', 'Ahmedabad', 'Cuttack', 'Nagpur', 'Dharamsala',
-          'Visakhapatnam', 'Pune', 'Raipur', 'Ranchi', 'Abu Dhabi',
-          'Sharjah', 'Mohali', 'Bengaluru']
-
-
+# -------------------------------
+# Load Model
+# -------------------------------
 pipe = pickle.load(open('pipe.pkl', 'rb'))
-st.title('IPL Win Predictor')
 
+# -------------------------------
+# Teams, Players
+# -------------------------------
+teams = [
+    'Sunrisers Hyderabad', 'Mumbai Indians', 'Royal Challengers Bangalore',
+    'Kolkata Knight Riders', 'Kings XI Punjab', 'Chennai Super Kings',
+    'Rajasthan Royals', 'Delhi Capitals'
+]
 
-col1, col2 = st.columns(2)
+batsmen = [
+    'Virat Kohli', 'Rohit Sharma', 'MS Dhoni',
+    'David Warner', 'KL Rahul'
+]
 
-with col1:
-    battingteam = st.selectbox('Select the batting team', sorted(teams))
+bowlers = [
+    'Jasprit Bumrah', 'Rashid Khan',
+    'Bhuvneshwar Kumar', 'Yuzvendra Chahal'
+]
 
-with col2:
+cities = ['Mumbai', 'Chennai', 'Delhi', 'Kolkata', 'Bangalore']
 
-    bowlingteam = st.selectbox('Select the bowling team', sorted(teams))
+# -------------------------------
+# UI
+# -------------------------------
+st.title("IPL Player Impact Analysis")
 
+batting_team = st.selectbox("Batting Team", teams)
+bowling_team = st.selectbox("Bowling Team", teams)
+city = st.selectbox("City", cities)
 
-city = st.selectbox(
-    'Select the city where the match is being played', sorted(cities))
+target = st.number_input("Target", min_value=1)
+score = st.number_input("Current Score", min_value=0)
+overs = st.number_input("Overs Completed", min_value=0.1, max_value=20.0)
+wickets_fallen = st.number_input("Wickets Fallen", min_value=0, max_value=10)
 
+player_type = st.radio("Select Player Type", ["Batsman", "Bowler"])
 
-target = st.number_input('Target')
+if player_type == "Batsman":
+    key_player = st.selectbox("Select Key Batsman", batsmen)
+else:
+    key_player = st.selectbox("Select Key Bowler", bowlers)
 
-col3, col4, col5 = st.columns(3)
+# -------------------------------
+# Prediction Logic
+# -------------------------------
+if st.button("Analyze Player Impact"):
 
-with col3:
-    score = st.number_input('Score')
+    def predict_probability(score, wickets, run_rate_adjust=0, wicket_adjust=0):
+        runs_left = target - score
+        balls_left = 120 - int(overs * 6)
+        wickets_remaining = 10 - wickets + wicket_adjust
 
-with col4:
-    overs = st.number_input('Overs Completed')
+        cur_rr = score / overs
+        req_rr = (runs_left * 6) / balls_left
 
-with col5:
-    wickets = st.number_input('Wickets Fallen')
+        df = pd.DataFrame({
+            'batting_team': [batting_team],
+            'bowling_team': [bowling_team],
+            'city': [city],
+            'runs_left': [runs_left],
+            'balls_left': [balls_left],
+            'wickets': [wickets_remaining],
+            'total_runs_x': [target],
+            'cur_run_rate': [cur_rr + run_rate_adjust],
+            'req_run_rate': [req_rr]
+        })
 
+        return pipe.predict_proba(df)[0][1]
 
-if st.button('Predict Probability'):
+    # Base probability
+    base_prob = predict_probability(score, wickets_fallen)
 
-    runs_left = target-score
-    balls_left = 120-(overs*6)
-    wickets = 10-wickets
-    currentrunrate = score/overs
-    requiredrunrate = (runs_left*6)/balls_left
+    # Player impact simulation
+    if player_type == "Batsman":
+        impact_prob = predict_probability(
+            score,
+            wickets_fallen,
+            run_rate_adjust=0.8,     # batsman improves scoring
+            wicket_adjust=1          # reduces wicket risk
+        )
+        st.info(f"Impact of {key_player} staying at crease")
 
-    input_df = pd.DataFrame({'batting_team': [battingteam], 'bowling_team': [bowlingteam], 'city': [city], 'runs_left': [runs_left], 'balls_left': [
-                            balls_left], 'wickets': [wickets], 'total_runs_x': [target], 'cur_run_rate': [currentrunrate], 'req_run_rate': [requiredrunrate]})
+    else:
+        impact_prob = predict_probability(
+            score,
+            wickets_fallen,
+            run_rate_adjust=-0.6,    # bowler controls run rate
+            wicket_adjust=-1         # increases wicket chance
+        )
+        st.info(f"Impact of {key_player} bowling now")
 
-    result = pipe.predict_proba(input_df)
-    lossprob = result[0][0]
-    winprob = result[0][1]
+    # -------------------------------
+    # Results
+    # -------------------------------
+    st.subheader("Win Probability Comparison")
 
-    st.header(battingteam+"- "+str(round(winprob*100))+"%")
+    st.write(f"Without Player Impact: **{round(base_prob * 100, 2)}%**")
+    st.write(f"With {key_player}: **{round(impact_prob * 100, 2)}%**")
 
-    st.header(bowlingteam+"- "+str(round(lossprob*100))+"%")
+    impact_change = (impact_prob - base_prob) * 100
+
+    if impact_change > 0:
+        st.success(f"Win probability increases by **{round(impact_change, 2)}%**")
+    else:
+        st.error(f"Win probability decreases by **{round(abs(impact_change), 2)}%**")
